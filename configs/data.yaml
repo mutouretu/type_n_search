@@ -1,0 +1,7 @@
+project_root: .
+raw_daily_dir: data/raw/daily
+labels_path: data/labels/labels.csv
+processed_dir: data/processed
+window_size: 120
+min_history: 160
+save_sequence: true
