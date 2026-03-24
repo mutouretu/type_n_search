@@ -1,17 +1,19 @@
 # Type N Search
 
-量化选股机器学习最小工程模板。当前版本聚焦于：
-- 基于日线窗口构建样本
-- 进行数据协议校验（data contract）
-- 产出 tabular 训练数据
-- 训练一个可跑通的 baseline（Logistic Regression）
+量化选股机器学习工程模板（当前已打通三模型 baseline）：
+- `logistic_regression`
+- `lightgbm`
+- `xgboost`
+
+支持完整链路：
+`mock data -> data contract check -> build dataset -> train -> scan -> inspect -> compare`
 
 ## 项目目标
 
 - 统一样本协议（`SampleMeta` + `sample_id`）
-- 在正式构建训练集前做数据校验，尽早拦截脏数据
-- 提供最小可运行流水线：`mock data -> check -> build dataset -> train`
-- 为后续接入更复杂模型（序列模型、多因子特征）保留接口
+- 构建前先做数据协议校验，尽早拦截脏数据
+- 提供可运行的 tabular baseline 训练/推理流程
+- 支持多模型统一 save/load 与对比分析
 
 ## 目录结构
 
@@ -19,110 +21,119 @@
 type_n_search/
 ├── configs/
 │   ├── data.yaml
-│   └── train.yaml
+│   ├── train.yaml
+│   ├── train_lgbm.yaml
+│   ├── train_xgb.yaml
+│   ├── infer.yaml
+│   ├── infer_lgbm.yaml
+│   └── infer_xgb.yaml
 ├── data/
-│   ├── labels/
-│   │   └── labels.csv
-│   ├── raw/
-│   │   └── daily/                 # 原始日线 parquet
-│   └── processed/                 # dataset build 产物
-├── docs/
-│   └── data_contract.md
+│   ├── labels/labels.csv
+│   ├── raw/daily/                  # 按股票分 parquet
+│   └── processed/                  # build_dataset 产物
+├── docs/data_contract.md
+├── outputs/
+│   ├── models/
+│   ├── predictions/
+│   └── analysis/
 ├── scripts/
-│   ├── generate_mock_data.py      # 生成 mock 日线
-│   └── check_data_contract.py     # 数据协议校验
+│   ├── generate_mock_data.py
+│   ├── generate_richer_mock_data.py
+│   ├── check_data_contract.py
+│   ├── inspect_dataset.py
+│   ├── inspect_predictions.py
+│   └── compare_models.py
 ├── src/
 │   ├── data/
 │   ├── features/
+│   ├── inference/
 │   ├── models/
 │   ├── pipelines/
-│   │   ├── build_dataset.py
-│   │   └── train_model.py
 │   └── training/
-└── requirements.txt
+└── tests/
 ```
 
-## 如何生成 Mock 数据
+## 环境安装
 
 ```bash
-python scripts/generate_mock_data.py
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-默认生成 3 只股票（约 220 个交易日）的日线 parquet 到 `data/raw/daily/`：
-- `000001.SZ`
-- `000002.SZ`
-- `600000.SH`
-
-## 如何验数
+## 一键跑 richer mock 实验
 
 ```bash
-python scripts/check_data_contract.py \
-  --labels-path data/labels/labels.csv \
-  --raw-daily-dir data/raw/daily \
-  --min-history 160
-```
-
-校验内容包括：
-- labels 必需列/值合法性
-- 日线文件存在性与列完整性
-- `(ts_code, asof_date)` 对齐与历史长度
-- `sample_id == {ts_code}_{asof_date}` 强一致性
-
-## 如何 Build Dataset
-
-```bash
+python scripts/generate_richer_mock_data.py
+python scripts/check_data_contract.py
 python src/pipelines/build_dataset.py --config configs/data.yaml
+python scripts/inspect_dataset.py --output-json outputs/analysis/dataset_inspection_rich.json --top-n 10
+
+python src/pipelines/train_model.py --config configs/train.yaml
+python scripts/inspect_predictions.py --pred-path outputs/models/baseline_lr/valid_predictions.csv --output-json outputs/analysis/lr_valid_inspection_rich.json --top-n 10
+
+python src/pipelines/train_model.py --config configs/train_lgbm.yaml
+python scripts/inspect_predictions.py --pred-path outputs/models/baseline_lgbm/valid_predictions.csv --output-json outputs/analysis/lgbm_valid_inspection_rich.json --top-n 10
+
+python src/pipelines/train_model.py --config configs/train_xgb.yaml
+python scripts/inspect_predictions.py --pred-path outputs/models/baseline_xgb/valid_predictions.csv --output-json outputs/analysis/xgb_valid_inspection_rich.json --top-n 10
+
+python src/pipelines/run_scan.py --config configs/infer.yaml
+python src/pipelines/run_scan.py --config configs/infer_lgbm.yaml
+python src/pipelines/run_scan.py --config configs/infer_xgb.yaml
 ```
 
-执行顺序：
-1. 先跑 data contract 校验（失败即退出）
-2. 再构建训练集产物
-
-默认产物在 `data/processed/`：
-- `sample_meta.parquet`
-- `X_tabular.parquet`
-- `y.npy`
-- `X_sequence.npy`（可选）
-
-## 如何训练 Baseline
+## 模型对比（验证/扫描）
 
 ```bash
-python src/pipelines/train_model.py --config configs/train.yaml
-```
+python scripts/compare_models.py \
+  --pred-a-path outputs/models/baseline_lr/valid_predictions.csv \
+  --pred-b-path outputs/models/baseline_lgbm/valid_predictions.csv \
+  --name-a lr --name-b lgbm --top-n 10 \
+  --output-json outputs/analysis/compare_valid_lr_vs_lgbm_rich.json
 
-当前 baseline：
-- `model_name: logistic_regression`
-- 训练器输出：
-  - `model.pkl`
-  - `metrics.json`
-  - `valid_predictions.csv`
+python scripts/compare_models.py \
+  --pred-a-path outputs/models/baseline_lr/valid_predictions.csv \
+  --pred-b-path outputs/models/baseline_xgb/valid_predictions.csv \
+  --name-a lr --name-b xgb --top-n 10 \
+  --output-json outputs/analysis/compare_valid_lr_vs_xgb_rich.json
+
+python scripts/compare_models.py \
+  --pred-a-path outputs/models/baseline_lgbm/valid_predictions.csv \
+  --pred-b-path outputs/models/baseline_xgb/valid_predictions.csv \
+  --name-a lgbm --name-b xgb --top-n 10 \
+  --output-json outputs/analysis/compare_valid_lgbm_vs_xgb_rich.json
+```
 
 ## 真实数据交付格式
 
-### 1) 日线数据（按股票分文件）
+### 日线数据
 - 路径：`data/raw/daily/{ts_code}.parquet`
-- 必需列：
-  - `trade_date`
-  - `open`
-  - `high`
-  - `low`
-  - `close`
-  - `vol`
-- 可选列：
-  - `amount`
-  - `turnover_rate`
-  - `pct_chg`
+- 必需列：`trade_date, open, high, low, close, vol`
+- 可选列：`amount, turnover_rate, pct_chg`
 
-### 2) 标签数据
+### 标签数据
 - 路径：`data/labels/labels.csv`
-- 推荐列：
-  - `sample_id`
-  - `ts_code`
-  - `asof_date`
-  - `label`
-  - `label_source`
-  - `confidence`
+- 推荐列：`sample_id, ts_code, asof_date, label, label_source, confidence`
 
-说明：
-- `sample_id` 建议严格使用 `{ts_code}_{YYYY-MM-DD}`
-- `label` 当前按二分类处理（0/1）
+约定：
+- `sample_id` 格式：`{ts_code}_{YYYY-MM-DD}`
+- `label` 为二分类 `0/1`
+
+## 产物说明
+
+### build_dataset 输出
+- `data/processed/sample_meta.parquet`
+- `data/processed/X_tabular.parquet`
+- `data/processed/y.npy`
+- `data/processed/X_sequence.npy`（可选）
+
+### train_model 输出
+- `outputs/models/<model_name>/model.pkl`
+- `outputs/models/<model_name>/model_meta.json`
+- `outputs/models/<model_name>/normalizer.pkl`
+- `outputs/models/<model_name>/metrics.json`
+- `outputs/models/<model_name>/valid_predictions.csv`
+
+### run_scan 输出
+- `outputs/predictions/scan_predictions*.csv`
