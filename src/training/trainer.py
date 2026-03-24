@@ -12,9 +12,10 @@ import pandas as pd
 class Trainer:
     """Minimal trainer for fit/evaluate/save workflow."""
 
-    def __init__(self, model: Any, evaluator: Any, output_dir: str):
+    def __init__(self, model: Any, evaluator: Any, output_dir: str, model_name: Optional[str] = None):
         self.model = model
         self.evaluator = evaluator
+        self.model_name = model_name
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -39,6 +40,7 @@ class Trainer:
 
         model_path = self.output_dir / "model.pkl"
         self._save_model(model_path)
+        self._save_model_meta(self.output_dir / "model_meta.json")
 
         metrics_path = self.output_dir / "metrics.json"
         with metrics_path.open("w", encoding="utf-8") as f:
@@ -64,10 +66,10 @@ class Trainer:
         return {k: float(v) for k, v in metrics.items()}
 
     def _predict_score(self, X_valid: Any) -> np.ndarray:
-        if hasattr(self.model, "predict_proba"):
+        try:
             proba = np.asarray(self.model.predict_proba(X_valid))
             score = proba[:, 1] if proba.ndim == 2 and proba.shape[1] >= 2 else proba.squeeze()
-        else:
+        except (AttributeError, NotImplementedError):
             score = np.asarray(self.model.predict(X_valid)).squeeze()
 
         return np.asarray(score, dtype=float).reshape(-1)
@@ -108,3 +110,14 @@ class Trainer:
         if isinstance(obj, dict):
             return {str(k): float(v) for k, v in obj.items()}
         return {"metric": float(obj)}
+
+    def _save_model_meta(self, path: Path) -> None:
+        if self.model_name:
+            name = str(self.model_name)
+        elif hasattr(self.model, "model_name"):
+            name = str(getattr(self.model, "model_name"))
+        else:
+            name = self.model.__class__.__name__ if self.model is not None else "unknown"
+
+        with path.open("w", encoding="utf-8") as f:
+            json.dump({"model_name": name}, f, ensure_ascii=False, indent=2)

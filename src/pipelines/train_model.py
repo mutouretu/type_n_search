@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.features.normalizer import TabularNormalizer
 from src.models.factory import build_model
 from src.training.evaluator import Evaluator
 from src.training.trainer import Trainer
@@ -111,6 +112,13 @@ def main(config_path: str = "configs/train.yaml") -> Dict[str, float]:
     y_valid = np.asarray(y_array)[valid_mask.to_numpy()]
     sample_ids_valid = meta_df.loc[valid_mask, "sample_id"].to_numpy()
 
+    output_dir = Path(config.get("output_dir", "artifacts/train"))
+
+    normalizer = TabularNormalizer()
+    X_train = normalizer.fit_transform(X_train)
+    X_valid = normalizer.transform(X_valid)
+    normalizer.save(str(output_dir / "normalizer.pkl"))
+
     model_name = str(config.get("model_name", "logistic_regression"))
     model_params = config.get("model_params", {})
     if not isinstance(model_params, dict):
@@ -123,7 +131,8 @@ def main(config_path: str = "configs/train.yaml") -> Dict[str, float]:
     trainer = Trainer(
         model=model,
         evaluator=evaluator,
-        output_dir=str(config.get("output_dir", "artifacts/train")),
+        output_dir=str(output_dir),
+        model_name=model_name,
     )
 
     metrics = trainer.run(

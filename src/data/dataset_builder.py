@@ -10,6 +10,7 @@ import pandas as pd
 from src.data.loader import DailyDataLoader, LabelLoader
 from src.data.schema import SampleMeta, build_sample_id
 from src.features.feature_builder_tabular import build_tabular_features
+from src.features.indicators import add_basic_indicators
 from src.features.window_builder import build_window_by_asof_date
 
 
@@ -78,7 +79,7 @@ class DatasetBuilder:
             try:
                 daily_df = self.daily_loader.load_one(ts_code)
                 self._validate_daily_df_core(daily_df, ts_code)
-                daily_df = self._add_basic_indicators(daily_df)
+                daily_df = add_basic_indicators(daily_df)
 
                 window_df = build_window_by_asof_date(
                     daily_df,
@@ -215,21 +216,8 @@ class DatasetBuilder:
             raise KeyError(f"{ts_code} daily data missing required columns: {missing}")
 
     def _add_basic_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add lightweight MVP indicators used by downstream modules."""
-        if "trade_date" not in df.columns:
-            raise KeyError("Missing required column: trade_date")
-
-        out = df.copy()
-        out["trade_date"] = pd.to_datetime(out["trade_date"], errors="coerce")
-        out = out.dropna(subset=["trade_date"]).sort_values("trade_date").reset_index(drop=True)
-
-        if "close" in out.columns:
-            close = pd.to_numeric(out["close"], errors="coerce")
-            out["ret_1d"] = close.pct_change()
-            out["ma_5"] = close.rolling(5, min_periods=1).mean()
-            out["ma_20"] = close.rolling(20, min_periods=1).mean()
-
-        return out
+        """Backward-compatible wrapper; use shared indicator implementation."""
+        return add_basic_indicators(df)
 
     def _build_sequence_features(self, window_df: pd.DataFrame) -> np.ndarray:
         """Build MVP sequence matrix from selected numeric columns."""

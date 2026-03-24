@@ -22,3 +22,8 @@ class BaseModel(ABC):
     def save(self, path: str) -> None:
         """Optional model persistence interface."""
         raise NotImplementedError("save is not implemented for this model")
+
+    @classmethod
+    def load(cls, path: str):
+        """Optional model loading interface."""
+        raise NotImplementedError("load is not implemented for this model")

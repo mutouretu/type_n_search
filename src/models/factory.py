@@ -14,3 +14,13 @@ def build_model(name: str, **kwargs: Any) -> BaseModel:
         return LogisticRegressionBaseline(**kwargs)
 
     raise ValueError(f"Unknown model name: {name}")
+
+
+def load_model(model_name: str, model_path: str) -> BaseModel:
+    """Load persisted model instance by registered model name."""
+    name = model_name.strip().lower()
+
+    if name == "logistic_regression":
+        return LogisticRegressionBaseline.load(model_path)
+
+    raise ValueError(f"Unknown model name: {model_name}")
