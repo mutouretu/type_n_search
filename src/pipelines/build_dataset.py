@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.dataset_builder import DatasetBuilder
+from scripts.check_data_contract import validate_or_raise
 
 
 def _load_yaml(path: str) -> Dict[str, Any]:
@@ -26,12 +27,22 @@ def _load_yaml(path: str) -> Dict[str, Any]:
 def main(config_path: str = "configs/data.yaml") -> Dict[str, Any]:
     config = _load_yaml(config_path)
 
+    labels_path = config.get("labels_path", "data/labels/labels.csv")
+    raw_daily_dir = config.get("raw_daily_dir", config.get("data_dir", "data/raw/daily"))
+    min_history = int(config.get("min_history", 80))
+
+    validate_or_raise(
+        labels_path=Path(labels_path),
+        raw_daily_dir=Path(raw_daily_dir),
+        min_history=min_history,
+    )
+
     builder = DatasetBuilder(
-        labels_path=config.get("labels_path", "data/labels/labels.csv"),
-        data_dir=config.get("data_dir", config.get("raw_daily_dir", "data/raw/daily")),
+        labels_path=labels_path,
+        data_dir=config.get("data_dir", raw_daily_dir),
         output_dir=config.get("output_dir", config.get("processed_dir", "data/processed")),
         window_size=int(config.get("window_size", 120)),
-        min_history=int(config.get("min_history", 80)),
+        min_history=min_history,
         train_ratio=float(config.get("train_ratio", 0.7)),
         valid_ratio=float(config.get("valid_ratio", 0.15)),
         sequence_cols=config.get("sequence_cols"),

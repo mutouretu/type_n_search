@@ -65,6 +65,8 @@ def check_label_values(df: pd.DataFrame) -> dict[str, Any]:
         "num_invalid_label": 0,
         "duplicate_sample_id_count": 0,
         "duplicate_ts_code_asof_date_count": 0,
+        "num_inconsistent_sample_id": 0,
+        "inconsistent_sample_id_examples": [],
         "label_distribution": {},
         "warnings": [],
         "errors": [],
@@ -92,6 +94,28 @@ def check_label_values(df: pd.DataFrame) -> dict[str, Any]:
             df.duplicated(subset=["ts_code", "asof_date"]).sum()
         )
 
+    if {"sample_id", "ts_code", "asof_date"}.issubset(df.columns):
+        inconsistent_examples: list[dict[str, str]] = []
+        inconsistent_count = 0
+        for _, row in df.iterrows():
+            ts_code = row["ts_code"]
+            asof_date = row["asof_date"]
+            sample_id = row["sample_id"]
+            if pd.isna(ts_code) or pd.isna(asof_date) or pd.isna(sample_id):
+                continue
+            expected_sample_id = build_sample_id(str(ts_code), asof_date)
+            if str(sample_id) != expected_sample_id:
+                inconsistent_count += 1
+                if len(inconsistent_examples) < 10:
+                    inconsistent_examples.append(
+                        {
+                            "sample_id": str(sample_id),
+                            "expected_sample_id": expected_sample_id,
+                        }
+                    )
+        result["num_inconsistent_sample_id"] = inconsistent_count
+        result["inconsistent_sample_id_examples"] = inconsistent_examples
+
     if result["num_null_ts_code"] > 0:
         result["errors"].append("labels contain null ts_code")
     if result["num_null_asof_date"] > 0:
@@ -104,6 +128,10 @@ def check_label_values(df: pd.DataFrame) -> dict[str, Any]:
         result["warnings"].append("labels contain duplicate sample_id")
     if result["duplicate_ts_code_asof_date_count"] > 0:
         result["warnings"].append("labels contain duplicate (ts_code, asof_date)")
+    if result["num_inconsistent_sample_id"] > 0:
+        result["errors"].append(
+            "labels contain inconsistent sample_id (must equal {ts_code}_{asof_date})"
+        )
 
     return result
 
@@ -372,6 +400,19 @@ def print_report(report: dict[str, Any]) -> None:
     print()
 
     print("=" * 80)
+
+
+def validate_or_raise(labels_path: Path, raw_daily_dir: Path, min_history: int) -> dict[str, Any]:
+    """Run data-contract check, print report, and raise if failed."""
+    report = run_check(
+        labels_path=labels_path,
+        raw_daily_dir=raw_daily_dir,
+        min_history=min_history,
+    )
+    print_report(report)
+    if not report["ok"]:
+        raise ValueError("Data contract check failed.")
+    return report
 
 
 def main():
