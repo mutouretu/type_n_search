@@ -28,7 +28,13 @@ env/
 data/processed/
 data/raw/
 outputs/
+/data/processed/
+/data/raw/
+/outputs/
 
 # Optional
 *.parquet
 *.npy
+
+# Keep local environment private
+.venv/
