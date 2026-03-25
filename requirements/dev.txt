@@ -1,0 +1,2 @@
+-r tabular.txt
+pytest>=8,<9

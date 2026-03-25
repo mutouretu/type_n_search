@@ -1,0 +1,6 @@
+numpy>=2.2,<2.3
+pandas>=2.3,<2.4
+scikit-learn>=1.7,<1.8
+pyyaml>=6,<7
+pyarrow>=17,<20
+joblib>=1.4,<2
