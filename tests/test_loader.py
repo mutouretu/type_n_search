@@ -14,7 +14,10 @@ def test_load_parquet_success(tmp_path):
         {
             "trade_date": pd.date_range("2025-01-01", periods=3, freq="D"),
             "open": [10.0, 10.2, 10.3],
+            "high": [10.5, 10.6, 10.7],
+            "low": [9.8, 10.0, 10.1],
             "close": [10.1, 10.3, 10.4],
+            "vol": [1.0, 2.0, 3.0],
         }
     )
     df.to_parquet(data_dir / "000001.SZ.parquet", index=False)
@@ -24,6 +27,7 @@ def test_load_parquet_success(tmp_path):
 
     assert not out.empty
     assert "trade_date" in out.columns
+    assert out["vol"].tolist() == [100.0, 200.0, 300.0]
 
 
 def test_load_parquet_file_not_found(tmp_path):

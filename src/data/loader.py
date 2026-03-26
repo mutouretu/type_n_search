@@ -3,6 +3,8 @@ from typing import Union
 
 import pandas as pd
 
+from src.data.normalize import DailyUnitConfig, normalize_daily
+
 
 PathLike = Union[str, Path]
 
@@ -27,10 +29,18 @@ class LabelLoader:
 
 
 class DailyDataLoader:
-    """Load single-stock daily K-line parquet from raw storage."""
+    """Load single-stock daily parquet and apply schema normalization."""
 
-    def __init__(self, data_dir: PathLike):
+    def __init__(
+        self,
+        data_dir: PathLike,
+        *,
+        unit_config: DailyUnitConfig | None = None,
+        duplicate_policy: str = "raise",
+    ):
         self.data_dir = Path(data_dir)
+        self.unit_config = unit_config
+        self.duplicate_policy = duplicate_policy
 
     def load_one(self, ts_code: str) -> pd.DataFrame:
         file_path = self.data_dir / f"{ts_code}.parquet"
@@ -38,9 +48,8 @@ class DailyDataLoader:
             raise FileNotFoundError(f"Daily data file not found: {file_path}")
 
         df = pd.read_parquet(file_path)
-        if "trade_date" not in df.columns:
-            raise KeyError(f"Missing required column 'trade_date' in {file_path}")
-
-        df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
-        df = df.dropna(subset=["trade_date"]).sort_values("trade_date")
-        return df.reset_index(drop=True)
+        return normalize_daily(
+            df,
+            unit_config=self.unit_config,
+            duplicate_policy=self.duplicate_policy,
+        )

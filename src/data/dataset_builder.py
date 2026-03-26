@@ -8,7 +8,9 @@ import numpy as np
 import pandas as pd
 
 from src.data.loader import DailyDataLoader, LabelLoader
+from src.data.normalize import DailyUnitConfig
 from src.data.schema import SampleMeta, build_sample_id
+from src.data.validator import validate_daily_quality, validate_labels_df
 from src.features.feature_builder_tabular import build_tabular_features
 from src.features.indicators import add_basic_indicators
 from src.features.window_builder import build_window_by_asof_date
@@ -28,6 +30,9 @@ class DatasetBuilder:
         valid_ratio: float = 0.15,
         sequence_cols: Optional[Iterable[str]] = None,
         save_sequence: bool = True,
+        unit_config: Optional[DailyUnitConfig] = None,
+        duplicate_policy: str = "raise",
+        max_skip_ratio: Optional[float] = None,
     ):
         self.labels_path = labels_path
         self.data_dir = data_dir
@@ -44,17 +49,26 @@ class DatasetBuilder:
             "vol",
         ]
         self.save_sequence = save_sequence
+        self.max_skip_ratio = max_skip_ratio
 
         self.label_loader = LabelLoader(labels_path)
-        self.daily_loader = DailyDataLoader(data_dir)
+        self.daily_loader = DailyDataLoader(
+            data_dir,
+            unit_config=unit_config,
+            duplicate_policy=duplicate_policy,
+        )
 
     def build(self) -> Dict[str, Any]:
         """Run end-to-end dataset build and save standard output artifacts."""
         labels_df = self.label_loader.load()
         labels_df = self._normalize_label_schema(labels_df)
-        self._validate_labels_df(labels_df)
+        labels_df = validate_labels_df(
+            labels_df,
+            require_sample_id=False,
+            allowed_labels=(0, 1),
+            raise_on_error=True,
+        )
 
-        labels_df["asof_date"] = pd.to_datetime(labels_df["asof_date"], errors="coerce")
         labels_df = (
             labels_df.dropna(subset=["asof_date", "ts_code"])
             .sort_values("asof_date")
@@ -67,6 +81,9 @@ class DatasetBuilder:
         tabular_records: List[Dict[str, float]] = []
         y_values: List[int] = []
         seq_values: List[np.ndarray] = []
+        total_labels = len(labels_df)
+        skipped_samples = 0
+        skip_messages: List[str] = []
 
         for row in labels_df.itertuples(index=False):
             ts_code = str(getattr(row, "ts_code"))
@@ -78,7 +95,7 @@ class DatasetBuilder:
 
             try:
                 daily_df = self.daily_loader.load_one(ts_code)
-                self._validate_daily_df_core(daily_df, ts_code)
+                daily_df = validate_daily_quality(daily_df, raise_on_error=True)
                 daily_df = add_basic_indicators(daily_df)
 
                 window_df = build_window_by_asof_date(
@@ -117,6 +134,9 @@ class DatasetBuilder:
                 if self.save_sequence and seq_feat is not None:
                     seq_values.append(seq_feat)
             except Exception as exc:  # noqa: BLE001
+                skipped_samples += 1
+                if len(skip_messages) < 10:
+                    skip_messages.append(f"{sample_id}: {exc}")
                 print(f"[skip] {sample_id}: {exc}")
 
         if not meta_records:
@@ -151,6 +171,21 @@ class DatasetBuilder:
             np.save(sequence_path, seq_array)
             result["X_sequence"] = str(sequence_path)
 
+        if skipped_samples > 0:
+            skip_ratio = skipped_samples / max(total_labels, 1)
+            result["num_skipped"] = skipped_samples
+            result["skip_ratio"] = float(skip_ratio)
+            result["skip_examples"] = skip_messages
+            print(
+                "[summary] skipped samples: "
+                f"{skipped_samples}/{total_labels} ({skip_ratio:.2%})"
+            )
+            if self.max_skip_ratio is not None and skip_ratio > self.max_skip_ratio:
+                raise RuntimeError(
+                    "skip ratio exceeds limit: "
+                    f"{skip_ratio:.2%} > {self.max_skip_ratio:.2%}"
+                )
+
         return result
 
     def _normalize_label_schema(self, labels_df: pd.DataFrame) -> pd.DataFrame:
@@ -174,12 +209,6 @@ class DatasetBuilder:
         if missing:
             raise KeyError(f"labels missing required columns: {missing}")
         return out
-
-    def _validate_labels_df(self, labels_df: pd.DataFrame) -> None:
-        required = {"ts_code", "asof_date", "label"}
-        missing = [c for c in required if c not in labels_df.columns]
-        if missing:
-            raise KeyError(f"labels missing required columns: {missing}")
 
     def _build_time_split(self, asof_series: pd.Series) -> Dict[pd.Timestamp, str]:
         """Split unique dates in chronological order into train/valid/test."""
@@ -208,12 +237,6 @@ class DatasetBuilder:
                 split_map[d] = "test"
 
         return split_map
-
-    def _validate_daily_df_core(self, daily_df: pd.DataFrame, ts_code: str) -> None:
-        required_cols = ["trade_date", "high", "low", "close", "vol"]
-        missing = [c for c in required_cols if c not in daily_df.columns]
-        if missing:
-            raise KeyError(f"{ts_code} daily data missing required columns: {missing}")
 
     def _add_basic_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Backward-compatible wrapper; use shared indicator implementation."""
