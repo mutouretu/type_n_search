@@ -25,9 +25,9 @@ env/
 .ipynb_checkpoints/
 
 # Data artifacts
-data/processed/
-data/raw/
+data/
 outputs/
+experiments/
 /data/processed/
 /data/raw/
 /outputs/
