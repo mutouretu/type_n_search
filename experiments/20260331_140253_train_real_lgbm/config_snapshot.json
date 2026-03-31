@@ -1,0 +1,39 @@
+{
+  "train_config_path": "configs/train_real_lgbm.yaml",
+  "data_config_path": "configs/data_real.yaml",
+  "train_config": {
+    "project_root": ".",
+    "data_config_path": "configs/data_real.yaml",
+    "sample_meta_path": "data/processed/daily_cache/sample_meta.parquet",
+    "x_tabular_path": "data/processed/daily_cache/X_tabular.parquet",
+    "y_path": "data/processed/daily_cache/y.npy",
+    "output_dir": "outputs/models_real/baseline_lgbm",
+    "model_name": "lightgbm",
+    "model_params": {
+      "n_estimators": 200,
+      "learning_rate": 0.05,
+      "num_leaves": 31,
+      "max_depth": 5,
+      "min_child_samples": 10,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "random_state": 42,
+      "class_weight": "balanced"
+    },
+    "threshold": 0.5
+  },
+  "data_config": {
+    "project_root": ".",
+    "raw_daily_dir": "data/raw/daily/parquet_daily_cache",
+    "labels_path": "data/raw/labels/labels_daily_cache_model.csv",
+    "processed_dir": "data/processed/daily_cache",
+    "window_size": 120,
+    "min_history": 1,
+    "save_sequence": true,
+    "vol_unit": "lots",
+    "amount_unit": "thousand_yuan",
+    "vol_lot_size": 100.0,
+    "amount_thousand_size": 1000.0,
+    "duplicate_policy": "raise"
+  }
+}

@@ -1,6 +1,6 @@
 project_root: .
-raw_daily_dir: data/raw/daily
+raw_daily_dir: data/raw/daily/parquet_daily_cache
 model_dir: outputs/models/baseline_lgbm
 output_path: outputs/predictions/scan_predictions_lgbm.csv
 window_size: 120
-min_history: 160
+min_history: 1

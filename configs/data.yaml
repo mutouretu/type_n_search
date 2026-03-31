@@ -1,20 +1,12 @@
 project_root: .
-raw_daily_dir: data/raw/daily
-labels_path: data/labels/labels.csv
-processed_dir: data/processed
+raw_daily_dir: data/raw/daily/parquet_daily_cache
+labels_path: data/labels/labels_daily_cache_model.csv
+processed_dir: data/processed/daily_cache
 window_size: 120
-min_history: 160
+min_history: 1
 save_sequence: true
-
-# Unit assumptions for raw daily parquet normalization at ingestion boundary.
-# Tushare raw default: vol=lots(手), amount=thousand_yuan(千元).
 vol_unit: lots
 amount_unit: thousand_yuan
 vol_lot_size: 100.0
 amount_thousand_size: 1000.0
-
-# Duplicate trade_date handling for one ts_code parquet.
 duplicate_policy: raise
-
-# Optional strictness for build stage: raise if too many samples are skipped.
-# max_skip_ratio: 0.2

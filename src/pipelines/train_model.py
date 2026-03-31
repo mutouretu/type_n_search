@@ -17,6 +17,7 @@ from src.features.normalizer import TabularNormalizer
 from src.models.factory import build_model
 from src.training.evaluator import Evaluator
 from src.training.trainer import Trainer
+from src.utils.experiment_logger import log_training_experiment
 
 
 def _load_yaml(path: str) -> Dict[str, Any]:
@@ -41,6 +42,41 @@ def _load_processed_data(config: Dict[str, Any]) -> tuple[pd.DataFrame, pd.DataF
     return meta_df, tabular_df, y_array
 
 
+def _resolve_processed_paths(config: Dict[str, Any]) -> tuple[Path, Path, Path, Path]:
+    data_dir = Path(config.get("data_dir", "data/processed"))
+    meta_path = Path(config.get("sample_meta_path", data_dir / "sample_meta.parquet"))
+    tabular_path = Path(config.get("x_tabular_path", data_dir / "X_tabular.parquet"))
+    y_path = Path(config.get("y_path", data_dir / "y.npy"))
+    return data_dir, meta_path, tabular_path, y_path
+
+
+def _infer_data_config_path(
+    train_config: Dict[str, Any],
+    train_config_path: str,
+    processed_dir: Path,
+) -> str | None:
+    explicit = train_config.get("data_config_path")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit
+
+    train_cfg_path = Path(train_config_path)
+    cfg_dir = train_cfg_path.parent if train_cfg_path.parent.exists() else Path("configs")
+    candidates = sorted(cfg_dir.glob("data*.yaml"))
+    if not candidates:
+        return None
+
+    target = processed_dir.resolve()
+    for p in candidates:
+        data_cfg = _load_yaml(str(p))
+        c_processed = data_cfg.get("processed_dir", data_cfg.get("output_dir", "data/processed"))
+        c_path = Path(str(c_processed))
+        if not c_path.is_absolute():
+            c_path = (Path(".") / c_path).resolve()
+        if c_path == target:
+            return str(p)
+    return None
+
+
 def _align_tabular_by_sample_id(meta_df: pd.DataFrame, tabular_df: pd.DataFrame) -> pd.DataFrame:
     if "sample_id" not in meta_df.columns:
         raise KeyError("sample_meta is missing required column: sample_id")
@@ -61,6 +97,7 @@ def _align_tabular_by_sample_id(meta_df: pd.DataFrame, tabular_df: pd.DataFrame)
 
 def main(config_path: str = "configs/train.yaml") -> Dict[str, float]:
     config = _load_yaml(config_path)
+    data_dir, meta_path, _, _ = _resolve_processed_paths(config)
 
     meta_df, tabular_df, y_array = _load_processed_data(config)
     if len(meta_df) != len(y_array):
@@ -146,6 +183,25 @@ def main(config_path: str = "configs/train.yaml") -> Dict[str, float]:
     print("Training finished. Metrics:")
     for k, v in metrics.items():
         print(f"  {k}: {v}")
+
+    data_config_path = _infer_data_config_path(config, config_path, meta_path.parent)
+    data_config = _load_yaml(data_config_path) if data_config_path else {}
+    exp_result = log_training_experiment(
+        train_config=config,
+        train_config_path=config_path,
+        data_config=data_config,
+        data_config_path=data_config_path,
+        model_name=model_name,
+        metrics=metrics,
+        meta_df=meta_df,
+        tabular_df=tabular_df,
+        model_output_dir=str(output_dir),
+        processed_data_dir=str(meta_path.parent),
+    )
+    print("Experiment logged:")
+    print(f"  exp_id: {exp_result['exp_id']}")
+    print(f"  experiment_dir: {exp_result['experiment_dir']}")
+    print(f"  summary: {exp_result['summary_path']}")
 
     return metrics
 

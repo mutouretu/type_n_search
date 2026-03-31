@@ -1,0 +1,21 @@
+{
+  "n_features": 11,
+  "feature_columns": [
+    "base_range_pct",
+    "base_vol_cv",
+    "vol_shrink_ratio",
+    "recent_return_5",
+    "recent_return_10",
+    "breakout_distance_20",
+    "breakout_distance_60",
+    "volume_spike_ratio",
+    "above_ma10_ratio",
+    "above_ma20_ratio",
+    "volatility_20"
+  ],
+  "has_sequence_features": true,
+  "has_tabular_features": true,
+  "excluded_non_feature_columns": [
+    "sample_id"
+  ]
+}
