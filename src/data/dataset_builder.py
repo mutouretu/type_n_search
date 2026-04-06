@@ -33,6 +33,8 @@ class DatasetBuilder:
         unit_config: Optional[DailyUnitConfig] = None,
         duplicate_policy: str = "raise",
         max_skip_ratio: Optional[float] = None,
+        split_method: str = "time",
+        split_seed: int = 42,
     ):
         self.labels_path = labels_path
         self.data_dir = data_dir
@@ -50,6 +52,8 @@ class DatasetBuilder:
         ]
         self.save_sequence = save_sequence
         self.max_skip_ratio = max_skip_ratio
+        self.split_method = split_method
+        self.split_seed = split_seed
 
         self.label_loader = LabelLoader(labels_path)
         self.daily_loader = DailyDataLoader(
@@ -75,7 +79,7 @@ class DatasetBuilder:
             .reset_index(drop=True)
         )
 
-        split_map = self._build_time_split(labels_df["asof_date"])
+        split_map = self._build_split(labels_df)
 
         meta_records: List[Dict[str, Any]] = []
         tabular_records: List[Dict[str, float]] = []
@@ -115,7 +119,10 @@ class DatasetBuilder:
                 seq_feat = self._build_sequence_features(window_df) if self.save_sequence else None
 
                 label = int(getattr(row, "label"))
-                split = split_map.get(asof_date.normalize(), "train")
+                if self.split_method == "time":
+                    split = split_map.get(asof_date.normalize(), "train")
+                else:
+                    split = split_map.get(sample_id, "train")
                 meta = SampleMeta(
                     sample_id=sample_id,
                     ts_code=ts_code,
@@ -235,6 +242,62 @@ class DatasetBuilder:
                 split_map[d] = "valid"
             elif d in test_dates:
                 split_map[d] = "test"
+
+        return split_map
+
+    def _build_split(self, labels_df: pd.DataFrame) -> Dict[Any, str]:
+        method = str(self.split_method or "time").lower()
+        if method in {"time", "time_by_asof_date"}:
+            return self._build_time_split(labels_df["asof_date"])
+        if method in {"stratified_random", "stratified"}:
+            return self._build_stratified_random_split(labels_df)
+        raise ValueError(f"Unsupported split_method: {self.split_method}")
+
+    def _build_stratified_random_split(self, labels_df: pd.DataFrame) -> Dict[str, str]:
+        """Split samples into train/valid/test with per-class ratios."""
+        rng = np.random.default_rng(self.split_seed)
+        df = labels_df.copy()
+        if "sample_id" not in df.columns:
+            df["sample_id"] = [
+                build_sample_id(str(ts), pd.to_datetime(dt).strftime("%Y-%m-%d"))
+                for ts, dt in zip(df["ts_code"], df["asof_date"])
+            ]
+
+        split_map: Dict[str, str] = {}
+        labels = pd.to_numeric(df["label"], errors="coerce").astype("Int64")
+
+        for cls in sorted(labels.dropna().unique().tolist()):
+            idx = np.where(labels.to_numpy() == cls)[0]
+            if len(idx) == 0:
+                continue
+            idx = rng.permutation(idx)
+            n = len(idx)
+
+            if n < 3:
+                n_train = max(1, n - 1)
+                n_valid = n - n_train
+            else:
+                n_train = min(n - 2, max(1, int(round(n * self.train_ratio))))
+                n_valid = min(n - n_train - 1, max(1, int(round(n * self.valid_ratio))))
+
+            n_test = n - n_train - n_valid
+            if n_test <= 0:
+                if n_valid > 1:
+                    n_valid -= 1
+                elif n_train > 1:
+                    n_train -= 1
+                n_test = n - n_train - n_valid
+
+            train_idx = idx[:n_train]
+            valid_idx = idx[n_train : n_train + n_valid]
+            test_idx = idx[n_train + n_valid :]
+
+            for i in train_idx:
+                split_map[str(df.iloc[i]["sample_id"])] = "train"
+            for i in valid_idx:
+                split_map[str(df.iloc[i]["sample_id"])] = "valid"
+            for i in test_idx:
+                split_map[str(df.iloc[i]["sample_id"])] = "test"
 
         return split_map
 

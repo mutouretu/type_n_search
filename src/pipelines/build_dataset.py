@@ -95,6 +95,8 @@ def main(config_path: str = "configs/data.yaml") -> Dict[str, Any]:
         max_skip_ratio=(
             float(config["max_skip_ratio"]) if "max_skip_ratio" in config else None
         ),
+        split_method=str(config.get("split_method", "time")),
+        split_seed=int(config.get("split_seed", 42)),
     )
 
     result = builder.build()

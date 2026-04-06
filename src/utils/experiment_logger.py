@@ -90,6 +90,13 @@ def _infer_split_method(meta_df: pd.DataFrame) -> str:
     return "unknown"
 
 
+def _resolve_split_method(meta_df: pd.DataFrame, data_config: Dict[str, Any] | None) -> str:
+    configured = str((data_config or {}).get("split_method", "")).strip()
+    if configured:
+        return configured
+    return _infer_split_method(meta_df)
+
+
 def _git_commit() -> str | None:
     try:
         out = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
@@ -127,7 +134,7 @@ def log_training_experiment(
 
     dataset_name = _infer_dataset_name(data_config_path, train_config_path)
     label_file = (data_config or {}).get("labels_path")
-    split_method = _infer_split_method(meta_df)
+    split_method = _resolve_split_method(meta_df, data_config)
 
     split_series = meta_df.get("split", pd.Series(dtype=str)).astype(str)
     label_series = pd.to_numeric(meta_df.get("label", pd.Series(dtype=float)), errors="coerce")
@@ -245,4 +252,3 @@ def log_training_experiment(
         "experiment_dir": str(exp_dir),
         "summary_path": str(summary_path),
     }
-
