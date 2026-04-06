@@ -38,3 +38,10 @@ experiments/
 
 # Keep local environment private
 .venv/
+
+# Keep one labels template tracked
+!data/
+data/*
+!data/labels/
+data/labels/*
+!data/labels/labels.example.csv
