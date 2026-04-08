@@ -1,0 +1,5 @@
+project_root: .
+lgbm_config: configs/infer_lgbm.yaml
+xgb_config: configs/infer_xgb.yaml
+output_path: outputs/predictions/scan_predictions_intersection_top200.csv
+top_n: 200

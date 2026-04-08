@@ -17,7 +17,7 @@ from src.data.schema import build_sample_id
 from src.features.feature_builder_tabular import build_tabular_features
 from src.features.indicators import add_basic_indicators
 from src.features.window_builder import build_window_by_asof_date
-from src.inference.postprocess import sort_predictions
+from src.inference.postprocess import resolve_dated_output_path, sort_predictions
 from src.inference.predictor import TabularPredictor
 
 
@@ -96,6 +96,10 @@ def main(config_path: str = "configs/infer.yaml") -> pd.DataFrame:
     pred_df["score"] = scores
     pred_df = sort_predictions(pred_df)
 
+    latest_asof_date = (
+        str(pred_df["asof_date"].max()) if "asof_date" in pred_df.columns and not pred_df.empty else None
+    )
+    output_path = resolve_dated_output_path(output_path, latest_asof_date)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pred_df.to_csv(output_path, index=False)
     print(f"scan finished: {len(pred_df)} samples -> {output_path}")

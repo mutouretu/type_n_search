@@ -1,9 +1,9 @@
 project_root: .
 data_config_path: configs/data.yaml
-sample_meta_path: data/processed/data_list_v3/sample_meta.parquet
-x_tabular_path: data/processed/data_list_v3/X_tabular.parquet
-y_path: data/processed/data_list_v3/y.npy
-output_dir: outputs/models/baseline_xgb_v3
+sample_meta_path: data/processed/data_list_v4/sample_meta.parquet
+x_tabular_path: data/processed/data_list_v4/X_tabular.parquet
+y_path: data/processed/data_list_v4/y.npy
+output_dir: outputs/models/baseline_xgb_v4
 
 model_name: xgboost
 model_params:
