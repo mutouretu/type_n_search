@@ -1,0 +1,5 @@
+project_root: .
+lgbm_config: configs/infer_lgbm_v5runupminer_w150.yaml
+xgb_config: configs/infer_xgb_v5runupminer_w150.yaml
+output_path: outputs/predictions/scan_predictions_intersection_top50_v5runupminer_w150.csv
+top_n: 50

@@ -1,0 +1,5 @@
+project_root: .
+lgbm_config: configs/infer_lgbm_baseline_no_runupscore7_w150.yaml
+xgb_config: configs/infer_xgb_baseline_no_runupscore7_w150.yaml
+output_path: outputs/predictions/scan_predictions_intersection_top500_baseline_no_runupscore7_w150.csv
+top_n: 500

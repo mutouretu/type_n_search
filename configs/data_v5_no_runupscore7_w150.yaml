@@ -1,0 +1,16 @@
+project_root: .
+raw_daily_dir: ../shared_data/raw/daily/parquet_daily_cache
+labels_path: ../shared_data/labels/labels_data_list_v5_no_runupscore7_trainable_w150.csv
+processed_dir: data/processed/data_list_v5_no_runupscore7_w150
+window_size: 150
+min_history: 1
+save_sequence: true
+vol_unit: lots
+amount_unit: thousand_yuan
+vol_lot_size: 100.0
+amount_thousand_size: 1000.0
+duplicate_policy: raise
+split_method: stratified_random
+split_seed: 42
+train_ratio: 0.7
+valid_ratio: 0.15

@@ -1,0 +1,17 @@
+project_root: .
+asof_date: "2026-03-27"
+output_path: outputs/predictions/review/runup_score7_w150_2026-03-27/review_candidates_baseline_plus_runup_top500.csv
+output_top_n: 0
+
+baseline:
+  name: baseline_type_n
+  path: outputs/predictions/runup_score7_w150_2026-03-27/scan_predictions_intersection_top500_baseline_no_runupscore7_w150_strict_2026-03-27.csv
+  score_col: score_mean
+  top_n: 500
+
+specialists:
+  - name: runup
+    path: outputs/predictions/runup_score7_w150_2026-03-27/scan_predictions_intersection_top500_baseline_runupscore7_w150_strict_2026-03-27.csv
+    score_col: score_mean
+    top_n: 500
+    pass_rank: 500

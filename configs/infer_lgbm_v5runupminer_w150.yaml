@@ -1,0 +1,6 @@
+project_root: .
+raw_daily_dir: ../shared_data/raw/daily/parquet_daily_cache
+model_dir: outputs/models/baseline_lgbm_v5runupminer_w150
+output_path: outputs/predictions/scan_predictions_lgbm_v5runupminer_w150.csv
+window_size: 150
+min_history: 1
