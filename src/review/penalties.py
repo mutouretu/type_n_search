@@ -15,6 +15,12 @@ def _resolve_path(project_root: Path, path: str | Path) -> Path:
     return p if p.is_absolute() else project_root / p
 
 
+def _apply_factor_weight(factor: pd.Series, weight: float) -> pd.Series:
+    """Interpolate a multiplicative factor toward neutral 1.0 by weight."""
+    numeric_factor = pd.to_numeric(factor, errors="coerce")
+    return 1.0 + float(weight) * (numeric_factor - 1.0)
+
+
 def _load_runup_values(
     rows: pd.DataFrame,
     *,
@@ -143,6 +149,42 @@ def _load_base_stability_values(
     return pd.DataFrame(stability_rows)
 
 
+def _load_box_breakout_values(
+    rows: pd.DataFrame,
+    *,
+    raw_data_dir: Path,
+    window: int,
+    high_col: str,
+    close_col: str,
+) -> pd.DataFrame:
+    breakout_rows: List[Dict[str, Any]] = []
+    for ts_code, group in rows[KEY_COLUMNS].drop_duplicates().groupby("ts_code"):
+        path = raw_data_dir / f"{ts_code}.parquet"
+        values_by_date: Dict[str, Dict[str, float]] = {}
+        if path.exists():
+            daily = pd.read_parquet(path, columns=["trade_date", high_col, close_col]).copy()
+            daily["trade_date"] = pd.to_datetime(daily["trade_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+            daily = daily.dropna(subset=["trade_date"]).sort_values("trade_date")
+            high = pd.to_numeric(daily[high_col], errors="coerce")
+            close = pd.to_numeric(daily[close_col], errors="coerce")
+            box_high = high.shift(1).rolling(window, min_periods=window).max().replace(0, float("nan"))
+            daily["box_high"] = box_high
+            daily["box_breakout_pct"] = close / box_high - 1.0
+            values_by_date = daily.set_index("trade_date")[["box_high", "box_breakout_pct"]].to_dict("index")
+        for _, row in group.iterrows():
+            values = values_by_date.get(str(row["asof_date"]), {})
+            breakout_rows.append(
+                {
+                    "sample_id": row["sample_id"],
+                    "ts_code": row["ts_code"],
+                    "asof_date": row["asof_date"],
+                    "box_high": values.get("box_high", pd.NA),
+                    "box_breakout_pct": values.get("box_breakout_pct", pd.NA),
+                }
+            )
+    return pd.DataFrame(breakout_rows)
+
+
 def _apply_runup_post_penalty(result: pd.DataFrame, config: Dict[str, Any], project_root: Path) -> pd.DataFrame:
     if not bool(config.get("enabled", False)):
         return result
@@ -154,6 +196,7 @@ def _apply_runup_post_penalty(result: pd.DataFrame, config: Dict[str, Any], proj
     score_col = str(config.get("score_col", "baseline_score"))
     output_score_col = str(config.get("output_score_col", "adjusted_score"))
     runup_col = str(config.get("runup_col", f"runup_{window}"))
+    weight = float(config.get("weight", 1.0))
 
     if score_col not in result.columns:
         raise ValueError(f"Runup post penalty score_col not found: {score_col}")
@@ -163,7 +206,10 @@ def _apply_runup_post_penalty(result: pd.DataFrame, config: Dict[str, Any], proj
     out = out.rename(columns={"runup_value": runup_col})
     out["runup_penalty_threshold"] = threshold
     out["runup_penalty_sharpness"] = sharpness
-    out["runup_penalty_factor"] = sigmoid_decay_factor(out[runup_col], threshold=threshold, sharpness=sharpness)
+    raw_factor = sigmoid_decay_factor(out[runup_col], threshold=threshold, sharpness=sharpness)
+    out["runup_penalty_factor"] = _apply_factor_weight(raw_factor, weight)
+    out["runup_penalty_raw_factor"] = raw_factor
+    out["runup_penalty_weight"] = weight
     out[output_score_col] = pd.to_numeric(out[score_col], errors="coerce") * out["runup_penalty_factor"]
     return out
 
@@ -196,6 +242,7 @@ def _apply_volume_post_penalty(result: pd.DataFrame, config: Dict[str, Any], pro
     streak_col = str(config.get("streak_col", "volume_spike_streak"))
     factor_col = str(config.get("factor_col", "volume_penalty_factor"))
     keep_component_factors = bool(config.get("keep_component_factors", False))
+    weight = float(config.get("weight", 1.0))
 
     if score_col not in result.columns:
         raise ValueError(f"Volume post penalty score_col not found: {score_col}")
@@ -221,10 +268,13 @@ def _apply_volume_post_penalty(result: pd.DataFrame, config: Dict[str, Any], pro
         threshold=streak_threshold,
         sharpness=streak_sharpness,
     )
-    out[factor_col] = strength_factor * streak_factor
+    raw_factor = strength_factor * streak_factor
+    out[factor_col] = _apply_factor_weight(raw_factor, weight)
+    out["volume_penalty_weight"] = weight
     if keep_component_factors:
         out["volume_strength_boost_factor"] = strength_factor
         out["volume_streak_decay_factor"] = streak_factor
+        out["volume_raw_factor"] = raw_factor
     out["volume_strength_threshold"] = strength_threshold
     out["volume_streak_threshold"] = streak_threshold
     out[output_score_col] = pd.to_numeric(out[score_col], errors="coerce") * out[factor_col]
@@ -295,6 +345,56 @@ def _apply_base_stability_post_penalty(result: pd.DataFrame, config: Dict[str, A
     return out
 
 
+def _apply_box_breakout_post_penalty(result: pd.DataFrame, config: Dict[str, Any], project_root: Path) -> pd.DataFrame:
+    if not bool(config.get("enabled", False)):
+        return result
+
+    raw_data_dir = _resolve_path(project_root, config["raw_data_dir"])
+    window = int(config.get("window", 60))
+    high_col = str(config.get("high_col", "high"))
+    close_col = str(config.get("close_col", "close"))
+    score_col = str(config.get("score_col", "adjusted_score"))
+    output_score_col = str(config.get("output_score_col", score_col))
+    factor_col = str(config.get("factor_col", "box_breakout_factor"))
+
+    strength_cfg = config.get("strength", {})
+    if not isinstance(strength_cfg, dict):
+        strength_cfg = {}
+    strength_threshold = float(strength_cfg.get("threshold", -0.01))
+    strength_sharpness = float(strength_cfg.get("sharpness", 80.0))
+    min_factor = float(config.get("min_factor", 0.3))
+    max_factor = float(config.get("max_factor", 1.2))
+    weight = float(config.get("weight", 1.0))
+
+    if score_col not in result.columns:
+        raise ValueError(f"Box breakout post penalty score_col not found: {score_col}")
+
+    breakout = _load_box_breakout_values(
+        result,
+        raw_data_dir=raw_data_dir,
+        window=window,
+        high_col=high_col,
+        close_col=close_col,
+    )
+    out = result.merge(breakout, on=KEY_COLUMNS, how="left")
+    strength = sigmoid_boost_factor(
+        out["box_breakout_pct"],
+        threshold=strength_threshold,
+        sharpness=strength_sharpness,
+        max_boost=1.0,
+        missing_value=0.0,
+    )
+    # sigmoid_boost_factor returns [1, 2]; normalize it to [0, 1] before scaling.
+    normalized_strength = strength - 1.0
+    raw_factor = min_factor + (max_factor - min_factor) * normalized_strength
+    out[factor_col] = _apply_factor_weight(raw_factor, weight)
+    out["box_breakout_raw_factor"] = raw_factor
+    out["box_breakout_weight"] = weight
+    out["box_breakout_threshold"] = strength_threshold
+    out[output_score_col] = pd.to_numeric(out[score_col], errors="coerce") * out[factor_col]
+    return out
+
+
 def apply_post_penalties(result: pd.DataFrame, config: Dict[str, Any], project_root: Path) -> pd.DataFrame:
     """Apply optional review-stage penalties without touching training/inference pipelines."""
     if not isinstance(config, dict):
@@ -310,6 +410,9 @@ def apply_post_penalties(result: pd.DataFrame, config: Dict[str, Any], project_r
     base_stability_penalty_cfg = config.get("base_stability", {})
     if isinstance(base_stability_penalty_cfg, dict):
         out = _apply_base_stability_post_penalty(out, base_stability_penalty_cfg, project_root)
+    box_breakout_penalty_cfg = config.get("box_breakout", {})
+    if isinstance(box_breakout_penalty_cfg, dict):
+        out = _apply_box_breakout_post_penalty(out, box_breakout_penalty_cfg, project_root)
     return out
 
 

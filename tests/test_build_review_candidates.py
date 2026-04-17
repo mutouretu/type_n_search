@@ -271,3 +271,77 @@ def test_build_review_candidates_can_apply_base_stability_post_penalty(tmp_path:
     trend_row = out[out["ts_code"] == "trend"].iloc[0]
     assert flat_row["base_stability_factor"] > trend_row["base_stability_factor"]
     assert flat_row["adjusted_score"] > trend_row["adjusted_score"]
+
+
+def test_build_review_candidates_can_apply_box_breakout_post_penalty(tmp_path: Path) -> None:
+    pred_dir = tmp_path / "predictions"
+    raw_dir = tmp_path / "raw"
+    pred_dir.mkdir()
+    raw_dir.mkdir()
+    baseline_path = pred_dir / "baseline.csv"
+    output_path = pred_dir / "review_breakout.csv"
+
+    asof_date = "2026-03-27"
+    pd.DataFrame(
+        [
+            {"sample_id": f"near_{asof_date}", "ts_code": "near", "asof_date": asof_date, "score_mean": 0.8},
+            {"sample_id": f"far_{asof_date}", "ts_code": "far", "asof_date": asof_date, "score_mean": 0.8},
+        ]
+    ).to_csv(baseline_path, index=False)
+
+    dates = pd.date_range(end=asof_date, periods=70, freq="D")
+    pd.DataFrame(
+        {
+            "trade_date": dates,
+            "high": [10.0] * 69 + [10.2],
+            "close": [9.8] * 69 + [10.05],
+        }
+    ).to_parquet(raw_dir / "near.parquet")
+    pd.DataFrame(
+        {
+            "trade_date": dates,
+            "high": [10.0] * 69 + [9.3],
+            "close": [9.0] * 69 + [9.2],
+        }
+    ).to_parquet(raw_dir / "far.parquet")
+
+    config_path = tmp_path / "review_breakout.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "project_root": str(tmp_path),
+                "asof_date": asof_date,
+                "output_path": str(output_path),
+                "primary_score_col": "adjusted_score",
+                "baseline": {
+                    "name": "baseline_type_n",
+                    "path": str(baseline_path),
+                    "score_col": "score_mean",
+                    "top_n": 2,
+                },
+                "post_penalties": {
+                    "box_breakout": {
+                        "enabled": True,
+                        "raw_data_dir": str(raw_dir),
+                        "window": 60,
+                        "score_col": "baseline_score",
+                        "output_score_col": "adjusted_score",
+                        "min_factor": 0.3,
+                        "max_factor": 1.2,
+                        "strength": {"threshold": -0.01, "sharpness": 80},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out = build_review_candidates(config_path)
+
+    assert output_path.exists()
+    assert {"box_high", "box_breakout_pct", "box_breakout_factor", "adjusted_score"}.issubset(out.columns)
+    near = out[out["ts_code"] == "near"].iloc[0]
+    far = out[out["ts_code"] == "far"].iloc[0]
+    assert near["box_breakout_pct"] > far["box_breakout_pct"]
+    assert near["box_breakout_factor"] > far["box_breakout_factor"]
+    assert near["adjusted_score"] > far["adjusted_score"]
