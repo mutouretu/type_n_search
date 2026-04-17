@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.review.penalties import apply_post_penalties
 
 KEY_COLUMNS = ["sample_id", "ts_code", "asof_date"]
 
@@ -144,13 +145,22 @@ def build_review_candidates(config_path: str | Path) -> pd.DataFrame:
     else:
         result["specialist_rank_sum"] = 0
 
+    result = apply_post_penalties(result, config.get("post_penalties", {}), project_root)
+
+    primary_score_col = str(config.get("primary_score_col", "adjusted_score"))
+    if primary_score_col not in result.columns:
+        primary_score_col = "baseline_score"
+
     result = result.sort_values(
-        ["pass_count", "baseline_score", "baseline_rank", "specialist_rank_sum"],
-        ascending=[False, False, True, True],
+        ["pass_count", primary_score_col, "baseline_score", "baseline_rank", "specialist_rank_sum"],
+        ascending=[False, False, False, True, True],
     ).reset_index(drop=True)
     result["review_rank"] = range(1, len(result) + 1)
 
-    front_cols = KEY_COLUMNS + ["review_rank", "baseline_name", "baseline_rank", "baseline_score", "pass_count"]
+    front_cols = KEY_COLUMNS + ["review_rank", "baseline_name", "baseline_rank", "baseline_score"]
+    if primary_score_col in result.columns and primary_score_col not in front_cols:
+        front_cols.append(primary_score_col)
+    front_cols.append("pass_count")
     other_cols = [col for col in result.columns if col not in front_cols]
     result = result[front_cols + other_cols]
     if output_top_n > 0:
