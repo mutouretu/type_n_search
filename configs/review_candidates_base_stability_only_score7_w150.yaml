@@ -1,0 +1,34 @@
+project_root: .
+asof_date: "2026-03-27"
+output_path: outputs/predictions/review/runup_score7_w150_2026-03-27/review_candidates_baseline_plus_base_stability_only_post_penalty_top500.csv
+output_top_n: 0
+primary_score_col: adjusted_score
+
+baseline:
+  name: baseline_type_n
+  path: outputs/predictions/runup_score7_w150_2026-03-27/scan_predictions_intersection_top500_baseline_no_runupscore7_w150_strict_2026-03-27.csv
+  score_col: score_mean
+  top_n: 500
+
+specialists: []
+
+post_penalties:
+  base_stability:
+    enabled: true
+    raw_data_dir: ../shared_data/raw/daily/parquet_daily_cache
+    window: 60
+    fast_ma_col: ma_bfq_20
+    slow_ma_col: ma_bfq_60
+    trend_ma_col: ma_bfq_60
+    score_col: baseline_score
+    output_score_col: adjusted_score
+    keep_component_factors: false
+    ma_gap:
+      threshold: 0.05
+      sharpness: 70
+    ma_trend:
+      prior_lag: 120
+      recent_weight: 0.7
+      prior_weight: 0.3
+      threshold: 0.08
+      sharpness: 30

@@ -189,3 +189,85 @@ def test_build_review_candidates_can_apply_volume_post_penalty(tmp_path: Path) -
     assert fresh["volume_spike_streak"] < late["volume_spike_streak"]
     assert fresh["volume_penalty_factor"] > late["volume_penalty_factor"]
     assert fresh["adjusted_score"] > late["adjusted_score"]
+
+
+def test_build_review_candidates_can_apply_base_stability_post_penalty(tmp_path: Path) -> None:
+    pred_dir = tmp_path / "predictions"
+    raw_dir = tmp_path / "raw"
+    pred_dir.mkdir()
+    raw_dir.mkdir()
+    baseline_path = pred_dir / "baseline.csv"
+    output_path = pred_dir / "review_base.csv"
+
+    asof_date = "2026-03-27"
+    pd.DataFrame(
+        [
+            {"sample_id": f"flat_{asof_date}", "ts_code": "flat", "asof_date": asof_date, "score_mean": 0.8},
+            {"sample_id": f"trend_{asof_date}", "ts_code": "trend", "asof_date": asof_date, "score_mean": 0.8},
+        ]
+    ).to_csv(baseline_path, index=False)
+
+    dates = pd.date_range(end=asof_date, periods=140, freq="D")
+    flat = pd.DataFrame(
+        {
+            "trade_date": dates,
+            "ma_bfq_20": [10.0] * 140,
+            "ma_bfq_60": [10.0] * 140,
+        }
+    )
+    trend = pd.DataFrame(
+        {
+            "trade_date": dates,
+            "ma_bfq_20": [10.0 + i * 0.08 for i in range(140)],
+            "ma_bfq_60": [10.0 + i * 0.02 for i in range(140)],
+        }
+    )
+    flat.to_parquet(raw_dir / "flat.parquet")
+    trend.to_parquet(raw_dir / "trend.parquet")
+
+    config_path = tmp_path / "review_base.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "project_root": str(tmp_path),
+                "asof_date": asof_date,
+                "output_path": str(output_path),
+                "primary_score_col": "adjusted_score",
+                "baseline": {
+                    "name": "baseline_type_n",
+                    "path": str(baseline_path),
+                    "score_col": "score_mean",
+                    "top_n": 2,
+                },
+                "post_penalties": {
+                    "base_stability": {
+                        "enabled": True,
+                        "raw_data_dir": str(raw_dir),
+                        "window": 20,
+                        "score_col": "baseline_score",
+                        "output_score_col": "adjusted_score",
+                        "ma_gap": {"threshold": 0.04, "sharpness": 80},
+                        "ma_trend": {
+                            "prior_lag": 40,
+                            "recent_weight": 0.7,
+                            "prior_weight": 0.3,
+                            "threshold": 0.08,
+                            "sharpness": 30,
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out = build_review_candidates(config_path)
+
+    assert output_path.exists()
+    assert {"base_ma_gap_l2", "base_ma60_trend_abs", "base_stability_factor", "adjusted_score"}.issubset(
+        out.columns
+    )
+    flat_row = out[out["ts_code"] == "flat"].iloc[0]
+    trend_row = out[out["ts_code"] == "trend"].iloc[0]
+    assert flat_row["base_stability_factor"] > trend_row["base_stability_factor"]
+    assert flat_row["adjusted_score"] > trend_row["adjusted_score"]

@@ -85,6 +85,64 @@ def _load_volume_values(
     return pd.DataFrame(volume_rows)
 
 
+def _load_base_stability_values(
+    rows: pd.DataFrame,
+    *,
+    raw_data_dir: Path,
+    window: int,
+    fast_ma_col: str,
+    slow_ma_col: str,
+    trend_ma_col: str,
+    prior_lag: int,
+    recent_weight: float,
+    prior_weight: float,
+) -> pd.DataFrame:
+    stability_rows: List[Dict[str, Any]] = []
+    parquet_columns = list(dict.fromkeys(["trade_date", fast_ma_col, slow_ma_col, trend_ma_col]))
+    for ts_code, group in rows[KEY_COLUMNS].drop_duplicates().groupby("ts_code"):
+        path = raw_data_dir / f"{ts_code}.parquet"
+        values_by_date: Dict[str, Dict[str, float]] = {}
+        if path.exists():
+            daily = pd.read_parquet(path, columns=parquet_columns).copy()
+            daily["trade_date"] = pd.to_datetime(daily["trade_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+            daily = daily.dropna(subset=["trade_date"]).sort_values("trade_date")
+            fast_ma = pd.to_numeric(daily[fast_ma_col], errors="coerce")
+            slow_ma = pd.to_numeric(daily[slow_ma_col], errors="coerce").replace(0, float("nan"))
+            trend_ma = pd.to_numeric(daily[trend_ma_col], errors="coerce").replace(0, float("nan"))
+
+            # Shift by one day so the base score describes the pre-breakout box, not the trigger day.
+            ma_gap = ((fast_ma - slow_ma) / slow_ma).shift(1)
+            daily["base_ma_gap_l2"] = (ma_gap.pow(2).rolling(window, min_periods=window).mean()).pow(0.5)
+            daily["base_ma60_recent_slope_pct"] = trend_ma.shift(1) / trend_ma.shift(window + 1) - 1.0
+            daily["base_ma60_prior_slope_pct"] = trend_ma.shift(window + 1) / trend_ma.shift(prior_lag + 1) - 1.0
+            daily["base_ma60_trend_abs"] = (
+                recent_weight * daily["base_ma60_recent_slope_pct"].abs()
+                + prior_weight * daily["base_ma60_prior_slope_pct"].abs()
+            )
+            values_by_date = daily.set_index("trade_date")[
+                [
+                    "base_ma_gap_l2",
+                    "base_ma60_recent_slope_pct",
+                    "base_ma60_prior_slope_pct",
+                    "base_ma60_trend_abs",
+                ]
+            ].to_dict("index")
+        for _, row in group.iterrows():
+            values = values_by_date.get(str(row["asof_date"]), {})
+            stability_rows.append(
+                {
+                    "sample_id": row["sample_id"],
+                    "ts_code": row["ts_code"],
+                    "asof_date": row["asof_date"],
+                    "base_ma_gap_l2": values.get("base_ma_gap_l2", pd.NA),
+                    "base_ma60_recent_slope_pct": values.get("base_ma60_recent_slope_pct", pd.NA),
+                    "base_ma60_prior_slope_pct": values.get("base_ma60_prior_slope_pct", pd.NA),
+                    "base_ma60_trend_abs": values.get("base_ma60_trend_abs", pd.NA),
+                }
+            )
+    return pd.DataFrame(stability_rows)
+
+
 def _apply_runup_post_penalty(result: pd.DataFrame, config: Dict[str, Any], project_root: Path) -> pd.DataFrame:
     if not bool(config.get("enabled", False)):
         return result
@@ -173,6 +231,70 @@ def _apply_volume_post_penalty(result: pd.DataFrame, config: Dict[str, Any], pro
     return out
 
 
+def _apply_base_stability_post_penalty(result: pd.DataFrame, config: Dict[str, Any], project_root: Path) -> pd.DataFrame:
+    if not bool(config.get("enabled", False)):
+        return result
+
+    raw_data_dir = _resolve_path(project_root, config["raw_data_dir"])
+    window = int(config.get("window", 60))
+    fast_ma_col = str(config.get("fast_ma_col", "ma_bfq_20"))
+    slow_ma_col = str(config.get("slow_ma_col", "ma_bfq_60"))
+    trend_ma_col = str(config.get("trend_ma_col", slow_ma_col))
+    score_col = str(config.get("score_col", "adjusted_score"))
+    output_score_col = str(config.get("output_score_col", score_col))
+    factor_col = str(config.get("factor_col", "base_stability_factor"))
+    keep_component_factors = bool(config.get("keep_component_factors", False))
+
+    ma_gap_cfg = config.get("ma_gap", {})
+    if not isinstance(ma_gap_cfg, dict):
+        ma_gap_cfg = {}
+    ma_gap_threshold = float(ma_gap_cfg.get("threshold", 0.04))
+    ma_gap_sharpness = float(ma_gap_cfg.get("sharpness", 80.0))
+
+    trend_cfg = config.get("ma_trend", {})
+    if not isinstance(trend_cfg, dict):
+        trend_cfg = {}
+    prior_lag = int(trend_cfg.get("prior_lag", window * 2))
+    recent_weight = float(trend_cfg.get("recent_weight", 0.7))
+    prior_weight = float(trend_cfg.get("prior_weight", 0.3))
+    trend_threshold = float(trend_cfg.get("threshold", 0.08))
+    trend_sharpness = float(trend_cfg.get("sharpness", 25.0))
+
+    if score_col not in result.columns:
+        raise ValueError(f"Base stability post penalty score_col not found: {score_col}")
+
+    stability = _load_base_stability_values(
+        result,
+        raw_data_dir=raw_data_dir,
+        window=window,
+        fast_ma_col=fast_ma_col,
+        slow_ma_col=slow_ma_col,
+        trend_ma_col=trend_ma_col,
+        prior_lag=prior_lag,
+        recent_weight=recent_weight,
+        prior_weight=prior_weight,
+    )
+    out = result.merge(stability, on=KEY_COLUMNS, how="left")
+    ma_gap_factor = sigmoid_decay_factor(
+        out["base_ma_gap_l2"],
+        threshold=ma_gap_threshold,
+        sharpness=ma_gap_sharpness,
+    )
+    trend_factor = sigmoid_decay_factor(
+        out["base_ma60_trend_abs"],
+        threshold=trend_threshold,
+        sharpness=trend_sharpness,
+    )
+    out[factor_col] = ma_gap_factor * trend_factor
+    if keep_component_factors:
+        out["base_ma_gap_factor"] = ma_gap_factor
+        out["base_ma60_trend_factor"] = trend_factor
+    out["base_ma_gap_threshold"] = ma_gap_threshold
+    out["base_ma60_trend_threshold"] = trend_threshold
+    out[output_score_col] = pd.to_numeric(out[score_col], errors="coerce") * out[factor_col]
+    return out
+
+
 def apply_post_penalties(result: pd.DataFrame, config: Dict[str, Any], project_root: Path) -> pd.DataFrame:
     """Apply optional review-stage penalties without touching training/inference pipelines."""
     if not isinstance(config, dict):
@@ -185,6 +307,9 @@ def apply_post_penalties(result: pd.DataFrame, config: Dict[str, Any], project_r
     volume_penalty_cfg = config.get("volume", {})
     if isinstance(volume_penalty_cfg, dict):
         out = _apply_volume_post_penalty(out, volume_penalty_cfg, project_root)
+    base_stability_penalty_cfg = config.get("base_stability", {})
+    if isinstance(base_stability_penalty_cfg, dict):
+        out = _apply_base_stability_post_penalty(out, base_stability_penalty_cfg, project_root)
     return out
 
 
