@@ -123,3 +123,69 @@ def test_build_review_candidates_can_apply_runup_post_penalty(tmp_path: Path) ->
     assert low["runup_penalty_factor"] > high["runup_penalty_factor"]
     assert low["adjusted_score"] > high["adjusted_score"]
     assert out.iloc[0]["ts_code"] == "low"
+
+
+def test_build_review_candidates_can_apply_volume_post_penalty(tmp_path: Path) -> None:
+    pred_dir = tmp_path / "predictions"
+    raw_dir = tmp_path / "raw"
+    pred_dir.mkdir()
+    raw_dir.mkdir()
+    baseline_path = pred_dir / "baseline.csv"
+    output_path = pred_dir / "review_volume.csv"
+
+    asof_date = "2026-03-27"
+    pd.DataFrame(
+        [
+            {"sample_id": f"fresh_{asof_date}", "ts_code": "fresh", "asof_date": asof_date, "score_mean": 0.8},
+            {"sample_id": f"late_{asof_date}", "ts_code": "late", "asof_date": asof_date, "score_mean": 0.8},
+        ]
+    ).to_csv(baseline_path, index=False)
+
+    dates = pd.date_range(end=asof_date, periods=30, freq="D")
+    fresh_vol = [100.0] * 27 + [220.0, 230.0, 240.0]
+    late_vol = [100.0] * 20 + [600.0] * 10
+    pd.DataFrame({"trade_date": dates, "vol": fresh_vol}).to_parquet(raw_dir / "fresh.parquet")
+    pd.DataFrame({"trade_date": dates, "vol": late_vol}).to_parquet(raw_dir / "late.parquet")
+
+    config_path = tmp_path / "review_volume.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "project_root": str(tmp_path),
+                "asof_date": asof_date,
+                "output_path": str(output_path),
+                "primary_score_col": "adjusted_score",
+                "baseline": {
+                    "name": "baseline_type_n",
+                    "path": str(baseline_path),
+                    "score_col": "score_mean",
+                    "top_n": 2,
+                },
+                "post_penalties": {
+                    "volume": {
+                        "enabled": True,
+                        "raw_data_dir": str(raw_dir),
+                        "ma_window": 20,
+                        "short_window": 3,
+                        "score_col": "baseline_score",
+                        "output_score_col": "adjusted_score",
+                        "strength": {"threshold": 1.8, "sharpness": 3, "max_boost": 0.15},
+                        "streak": {"spike_ratio": 1.8, "threshold": 3, "sharpness": 1.5},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out = build_review_candidates(config_path)
+
+    assert output_path.exists()
+    assert {"volume_ratio_3d_20", "volume_spike_streak", "volume_penalty_factor", "adjusted_score"}.issubset(
+        out.columns
+    )
+    fresh = out[out["ts_code"] == "fresh"].iloc[0]
+    late = out[out["ts_code"] == "late"].iloc[0]
+    assert fresh["volume_spike_streak"] < late["volume_spike_streak"]
+    assert fresh["volume_penalty_factor"] > late["volume_penalty_factor"]
+    assert fresh["adjusted_score"] > late["adjusted_score"]

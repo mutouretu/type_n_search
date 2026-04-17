@@ -1,6 +1,6 @@
 project_root: .
 asof_date: "2026-03-27"
-output_path: outputs/predictions/review/runup_score7_w150_2026-03-27/review_candidates_baseline_plus_runup_volume_post_penalty_top500.csv
+output_path: outputs/predictions/review/runup_score7_w150_2026-03-27/review_candidates_baseline_plus_volume_only_post_penalty_top500.csv
 output_top_n: 0
 primary_score_col: adjusted_score
 
@@ -10,16 +10,11 @@ baseline:
   score_col: score_mean
   top_n: 500
 
-specialists:
-  - name: runup
-    path: outputs/predictions/runup_score7_w150_2026-03-27/scan_predictions_intersection_top500_baseline_runupscore7_w150_strict_2026-03-27.csv
-    score_col: score_mean
-    top_n: 500
-    pass_rank: 500
+specialists: []
 
 post_penalties:
   runup:
-    enabled: true
+    enabled: false
     raw_data_dir: ../shared_data/raw/daily/parquet_daily_cache
     window: 150
     threshold: 0.4
@@ -31,7 +26,7 @@ post_penalties:
     raw_data_dir: ../shared_data/raw/daily/parquet_daily_cache
     ma_window: 20
     short_window: 3
-    score_col: adjusted_score
+    score_col: baseline_score
     output_score_col: adjusted_score
     keep_component_factors: false
     strength:
